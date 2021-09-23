@@ -275,7 +275,7 @@ func TestChartRepository_LoadIndex(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := &ChartRepository{}
-			err = r.LoadIndex(b)
+			err = r.LoadIndexFromBytes(b)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +286,7 @@ func TestChartRepository_LoadIndex(t *testing.T) {
 
 func TestChartRepository_LoadIndex_Duplicates(t *testing.T) {
 	r := &ChartRepository{}
-	if err := r.LoadIndex([]byte(indexWithDuplicates)); err == nil {
+	if err := r.LoadIndexFromBytes([]byte(indexWithDuplicates)); err == nil {
 		t.Errorf("Expected an error when duplicate entries are present")
 	}
 }
@@ -297,7 +297,7 @@ func TestChartRepository_LoadIndex_Unordered(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &ChartRepository{}
-	err = r.LoadIndex(b)
+	err = r.LoadIndexFromBytes(b)
 	if err != nil {
 		t.Fatal(err)
 	}

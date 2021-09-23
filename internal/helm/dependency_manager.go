@@ -28,6 +28,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
@@ -68,28 +69,33 @@ func (dm *DependencyManager) Build(ctx context.Context) error {
 		return nil
 	}
 
-	errs, ctx := errgroup.WithContext(ctx)
-	for _, i := range dm.Dependencies {
-		item := i
-		errs.Go(func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
+	defer func() {
+		for _, dep := range dm.Dependencies {
+			dep.Repository.Unload()
+		}
+	}()
 
-			var err error
-			switch item.Repository {
-			case nil:
-				err = dm.addLocalDependency(item)
-			default:
-				err = dm.addRemoteDependency(item)
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		const workers = 4
+		sem := semaphore.NewWeighted(workers)
+		for _, dep := range dm.Dependencies {
+			dep := dep
+			if err := sem.Acquire(groupCtx, 1); err != nil {
+				return err
 			}
-			return err
-		})
-	}
+			group.Go(func() error {
+				defer sem.Release(1)
+				if dep.Repository == nil {
+					return dm.addLocalDependency(dep)
+				}
+				return dm.addRemoteDependency(dep)
+			})
+		}
+		return nil
+	})
 
-	return errs.Wait()
+	return group.Wait()
 }
 
 func (dm *DependencyManager) addLocalDependency(dpr *DependencyWithRepository) error {
@@ -136,7 +142,11 @@ func (dm *DependencyManager) addLocalDependency(dpr *DependencyWithRepository) e
 
 func (dm *DependencyManager) addRemoteDependency(dpr *DependencyWithRepository) error {
 	if dpr.Repository == nil {
-		return fmt.Errorf("no ChartRepository given for '%s' dependency", dpr.Dependency.Name)
+		return fmt.Errorf("no HelmRepository for '%s' dependency", dpr.Dependency.Name)
+	}
+
+	if err := dpr.Repository.StrategicallyLoadIndex(); err != nil {
+		return err
 	}
 
 	chartVer, err := dpr.Repository.Get(dpr.Dependency.Name, dpr.Dependency.Version)

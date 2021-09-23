@@ -365,7 +365,7 @@ func TestHelmRepository_reconcileSource(t *testing.T) {
 			},
 		},
 		{
-			name:     "Missing secret returns FetchFailed=True and returns error",
+			name:     "Missing secret makes FetchFailed=True and returns error",
 			protocol: "http",
 			beforeFunc: func(obj *sourcev1.HelmRepository) {
 				obj.Spec.SecretRef = &meta.LocalObjectReference{Name: "non-existing"}
@@ -376,7 +376,7 @@ func TestHelmRepository_reconcileSource(t *testing.T) {
 			},
 		},
 		{
-			name:     "Malformed secret returns FetchFailed=True and returns error",
+			name:     "Malformed secret makes FetchFailed=True and returns error",
 			protocol: "http",
 			secret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -579,10 +579,10 @@ func TestHelmRepositoryReconciler_reconcileArtifact(t *testing.T) {
 
 			dirIB, err := yaml.Marshal(dirI)
 			g.Expect(err).NotTo(HaveOccurred())
-			i, err := helm.NewChartRepository("https://example.com", testGetters, nil)
+			i, err := helm.NewChartRepository("https://example.com", "", testGetters, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(i).ToNot(BeNil())
-			g.Expect(i.LoadIndex(dirIB)).To(Succeed())
+			g.Expect(i.LoadIndexFromBytes(dirIB)).To(Succeed())
 
 			artifact := testStorage.NewArtifactFor(obj.Kind, obj, "existing", "foo.tar.gz")
 			artifact.Checksum = i.Checksum

@@ -18,7 +18,7 @@ package helm
 
 import "strings"
 
-// NormalizeChartRepositoryURL ensures repository urls are normalized
+// NormalizeChartRepositoryURL ensures the given URL always ends with a "/".
 func NormalizeChartRepositoryURL(url string) string {
 	if url != "" {
 		return strings.TrimRight(url, "/") + "/"

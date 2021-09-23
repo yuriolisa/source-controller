@@ -305,7 +305,7 @@ func (r *HelmRepositoryReconciler) reconcileSource(ctx context.Context, obj *sou
 	}
 
 	// Construct Helm chart repository with options and download index
-	newIndex, err := helm.NewChartRepository(obj.Spec.URL, r.Getters, clientOpts)
+	newIndex, err := helm.NewChartRepository(obj.Spec.URL, "", r.Getters, clientOpts)
 	if err != nil {
 		switch err.(type) {
 		case *url.Error:

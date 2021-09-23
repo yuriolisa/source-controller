@@ -20,18 +20,25 @@ const SourceFinalizer = "finalizers.fluxcd.io"
 
 const (
 	// ArtifactUnavailableCondition indicates there is no Artifact available for the Source.
-	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if it is True.
+	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if True.
 	ArtifactUnavailableCondition string = "ArtifactUnavailable"
 
 	// ArtifactOutdatedCondition indicates the current Artifact of the Source is outdated.
-	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if it is True.
+	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if True.
 	ArtifactOutdatedCondition string = "ArtifactOutdated"
 
 	// FetchFailedCondition indicates a transient or persistent fetch failure of an upstream Source.
 	// If True, observations on the upstream Source revision may be impossible, and the Artifact available for the
 	// Source may be outdated.
-	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if it is True.
+	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if True.
 	FetchFailedCondition string = "FetchFailed"
+
+	// BuildFailedCondition indicates a transient or persistent build failure of the Artifact using collected Source(s)
+	// and the definitions from the resource.
+	// If True, the Artifact available for the Source may be outdated, and out of sync with the definitions for the
+	// current resource generation.
+	// This is a "negative polarity" or "abnormal-true" type, and is only present on the resource if True.
+	BuildFailedCondition string = "BuildFailed"
 )
 
 const (
@@ -44,8 +51,4 @@ const (
 	// AuthenticationFailedReason represents the fact that a given secret does not
 	// have the required fields or the provided credentials do not match.
 	AuthenticationFailedReason string = "AuthenticationFailed"
-
-	// VerificationFailedReason represents the fact that the cryptographic
-	// provenance verification for the source failed.
-	VerificationFailedReason string = "VerificationFailed"
 )
