@@ -12,8 +12,12 @@ BUILD_ARGS ?=
 # Architectures to build images for
 BUILD_PLATFORMS ?= linux/amd64,linux/arm64,linux/arm/v7
 
-# Go additional tag arguments, e.g. 'integration'
+# Go additional tag arguments, e.g. 'integration',
+# this is append to the tag arguments required for static builds
 GO_TAGS ?=
+
+# Go additional test arguments, can not contain -tags
+GO_TEST_ARGS ?= -race
 
 # Produce CRDs that work back to Kubernetes 1.16
 CRD_OPTIONS ?= crd:crdVersions=v1
@@ -96,7 +100,7 @@ build: check-deps $(LIBGIT2) ## Build manager binary
 KUBEBUILDER_ASSETS?="$(shell $(ENVTEST) --arch=$(ENVTEST_ARCH) use -i $(ENVTEST_KUBERNETES_VERSION) --bin-dir=$(ENVTEST_ASSETS_DIR) -p path)"
 test: $(LIBGIT2) install-envtest test-api check-deps ## Run tests
 	KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS) \
-	go test $(GO_STATIC_FLAGS) ./... -coverprofile cover.out
+	go test $(GO_TEST_ARGS) $(GO_STATIC_FLAGS) ./... -coverprofile cover.out
 
 check-deps:
 ifeq ($(shell uname -s),Darwin)
@@ -104,7 +108,7 @@ ifeq ($(shell uname -s),Darwin)
 endif
 
 test-api: ## Run api tests
-	cd api; go test ./... -coverprofile cover.out
+	cd api; go test $(GO_TEST_ARGS) ./... -coverprofile cover.out
 
 run: $(LIBGIT2) generate fmt vet manifests  ## Run against the configured Kubernetes cluster in ~/.kube/config
 	go run $(GO_STATIC_FLAGS) ./main.go
