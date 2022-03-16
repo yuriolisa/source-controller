@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 		gitImpl       git.Implementation
 		url           string
 		branch        string
-		setupGitProxy func(g *WithT, proxy *goproxy.ProxyHttpServer, proxyGotRequest *bool) (*git.AuthOptions, cleanupFunc)
+		setupGitProxy func(g *WithT, proxy *goproxy.ProxyHttpServer, proxiedRequests *int32) (*git.AuthOptions, cleanupFunc)
 		shortTimeout  bool
 		wantUsedProxy bool
 		wantError     bool
@@ -69,7 +70,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 			gitImpl: libgit2.Implementation,
 			url:     "https://example.com/bar/test-reponame",
 			branch:  "main",
-			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxyGotRequest *bool) (*git.AuthOptions, cleanupFunc) {
+			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxiedRequests *int32) (*git.AuthOptions, cleanupFunc) {
 				// Create the git server.
 				gitServer, err := gittestserver.NewTempGitServer()
 				g.Expect(err).ToNot(HaveOccurred())
@@ -103,7 +104,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 					// Check if the host matches with the git server address and the user-agent is the expected git client.
 					userAgent := ctx.Req.Header.Get("User-Agent")
 					if strings.Contains(host, "example.com") && strings.Contains(userAgent, "libgit2") {
-						*proxyGotRequest = true
+						atomic.AddInt32(proxiedRequests, 1)
 						return goproxy.OkConnect, u.Host
 					}
 					// Reject if it isn't our request.
@@ -130,7 +131,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 			gitImpl: gogit.Implementation,
 			url:     "http://example.com/bar/test-reponame",
 			branch:  "main",
-			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxyGotRequest *bool) (*git.AuthOptions, cleanupFunc) {
+			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxiedRequests *int32) (*git.AuthOptions, cleanupFunc) {
 				// Create the git server.
 				gitServer, err := gittestserver.NewTempGitServer()
 				g.Expect(err).ToNot(HaveOccurred())
@@ -153,7 +154,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 				var proxyHandler goproxy.FuncReqHandler = func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 					userAgent := req.Header.Get("User-Agent")
 					if strings.Contains(req.Host, "example.com") && strings.Contains(userAgent, "git") {
-						*proxyGotRequest = true
+						atomic.AddInt32(proxiedRequests, 1)
 						req.Host = u.Host
 						req.URL.Host = req.Host
 						return req, nil
@@ -181,13 +182,13 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 			gitImpl: gogit.Implementation,
 			url:     "https://github.com/git-fixtures/basic",
 			branch:  "master",
-			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxyGotRequest *bool) (*git.AuthOptions, cleanupFunc) {
+			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxiedRequests *int32) (*git.AuthOptions, cleanupFunc) {
 				var proxyHandler goproxy.FuncHttpsHandler = func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
 					// We don't check for user agent as this handler is only going to process CONNECT requests, and because Go's net/http
 					// is the one making such a request on behalf of go-git, adding a check for the go net/http user agent (Go-http-client)
 					// would only allow false positives from any request originating from Go's net/http.
 					if strings.Contains(host, "github.com") {
-						*proxyGotRequest = true
+						atomic.AddInt32(proxiedRequests, 1)
 						return goproxy.OkConnect, host
 					}
 					// Reject if it isnt our request.
@@ -208,10 +209,10 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 			gitImpl: gogit.Implementation,
 			url:     "https://192.0.2.1/bar/test-reponame",
 			branch:  "main",
-			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxyGotRequest *bool) (*git.AuthOptions, cleanupFunc) {
+			setupGitProxy: func(g *WithT, proxy *goproxy.ProxyHttpServer, proxiedRequests *int32) (*git.AuthOptions, cleanupFunc) {
 				var proxyHandler goproxy.FuncHttpsHandler = func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
 					// We shouldn't hit the proxy so we just want to check for any interaction, then reject.
-					*proxyGotRequest = true
+					atomic.AddInt32(proxiedRequests, 1)
 					return goproxy.RejectConnect, host
 				}
 				proxy.OnRequest().HandleConnect(proxyHandler)
@@ -235,8 +236,8 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 			proxy := goproxy.NewProxyHttpServer()
 			proxy.Verbose = true
 
-			proxyGotRequest := false
-			authOpts, cleanup := tt.setupGitProxy(g, proxy, &proxyGotRequest)
+			proxiedRequests := int32(0)
+			authOpts, cleanup := tt.setupGitProxy(g, proxy, &proxiedRequests)
 			defer cleanup()
 
 			proxyServer := http.Server{
@@ -283,7 +284,7 @@ func TestCheckoutStrategyForImplementation_Proxied(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 			}
 
-			g.Expect(proxyGotRequest).To(Equal(tt.wantUsedProxy))
+			g.Expect(atomic.LoadInt32(&proxiedRequests) > 0).To(Equal(tt.wantUsedProxy))
 
 		})
 	}
