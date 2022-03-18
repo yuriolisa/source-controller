@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/docker/go-units"
@@ -78,6 +77,12 @@ var helmRepositoryReadyCondition = summarize.Conditions{
 		meta.StalledCondition,
 		meta.ReconcilingCondition,
 	},
+}
+
+// helmRepositoryFailConditions contains the conditions that represent failure.
+var helmRepositoryFailConditions = []string{
+	sourcev1.FetchFailedCondition,
+	sourcev1.StorageOperationFailedCondition,
 }
 
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=helmrepositories,verbs=get;list;watch;create;update;patch;delete
@@ -201,6 +206,8 @@ func (r *HelmRepositoryReconciler) reconcile(ctx context.Context, obj *sourcev1.
 		conditions.MarkReconciling(obj, "NewGeneration", "reconciling new object generation (%d)", obj.Generation)
 	}
 
+	oldObj := obj.DeepCopy()
+
 	var chartRepo repository.ChartRepository
 	var artifact sourcev1.Artifact
 
@@ -223,7 +230,50 @@ func (r *HelmRepositoryReconciler) reconcile(ctx context.Context, obj *sourcev1.
 		// Prioritize requeue request in the result for successful results.
 		res = sreconcile.LowestRequeuingResult(res, recResult)
 	}
+
+	r.notify(oldObj, obj, chartRepo, res, resErr)
+
 	return res, resErr
+}
+
+// notify emits notification related to the reconciliation.
+func (r *HelmRepositoryReconciler) notify(oldObj, newObj *sourcev1.HelmRepository, chartRepo repository.ChartRepository, res sreconcile.Result, resErr error) {
+	// Notify successful reconciliation for new artifact and recovery from any
+	// failure.
+	if resErr == nil && res == sreconcile.ResultSuccess && newObj.Status.Artifact != nil {
+		annotations := map[string]string{
+			"revision": newObj.Status.Artifact.Revision,
+			"checksum": newObj.Status.Artifact.Checksum,
+		}
+
+		size := units.HumanSize(float64(*newObj.Status.Artifact.Size))
+
+		var oldChecksum string
+		if oldObj.GetArtifact() != nil {
+			oldChecksum = oldObj.GetArtifact().Checksum
+		}
+
+		if oldChecksum != newObj.GetArtifact().Checksum {
+			r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+				"NewArtifact", "stored index of size %s from '%s'", size, chartRepo.URL)
+		} else {
+			// Check if the failure condition in the old object is still present
+			// in the new object. If not found, emit an event to signal that the
+			// failure has been resolved.
+			foundCondition := false
+			for _, failCondition := range gitRepositoryFailConditions {
+				if conditions.Get(oldObj, failCondition) != nil &&
+					conditions.Get(newObj, failCondition) != nil {
+					foundCondition = true
+					break
+				}
+			}
+			if !foundCondition {
+				r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+					meta.SucceededReason, "fetched index of size %s from '%s'", size, chartRepo.URL)
+			}
+		}
+	}
 }
 
 // reconcileStorage ensures the current state of the storage matches the
@@ -439,23 +489,6 @@ func (r *HelmRepositoryReconciler) reconcileArtifact(ctx context.Context, obj *s
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
-
-	// Calculate the artifact size to be included in the NewArtifact event.
-	fi, err := os.Stat(chartRepo.CachePath)
-	if err != nil {
-		e := &serror.Event{
-			Err:    fmt.Errorf("unable to read the artifact: %w", err),
-			Reason: sourcev1.ReadOperationFailedReason,
-		}
-		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
-		return sreconcile.ResultEmpty, e
-	}
-	size := units.HumanSize(float64(fi.Size()))
-
-	r.AnnotatedEventf(obj, map[string]string{
-		"revision": artifact.Revision,
-		"checksum": artifact.Checksum,
-	}, corev1.EventTypeNormal, "NewArtifact", "fetched index of size %s from '%s'", size, chartRepo.URL)
 
 	// Record it on the object.
 	obj.Status.Artifact = artifact.DeepCopy()

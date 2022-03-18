@@ -88,6 +88,13 @@ var gitRepositoryReadyCondition = summarize.Conditions{
 	},
 }
 
+// gitRepositoryFailConditions contains the conditions that represent failure.
+var gitRepositoryFailConditions = []string{
+	sourcev1.FetchFailedCondition,
+	sourcev1.IncludeUnavailableCondition,
+	sourcev1.StorageOperationFailedCondition,
+}
+
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=gitrepositories,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=gitrepositories/finalizers,verbs=get;create;update;patch;delete
@@ -214,6 +221,8 @@ func (r *GitRepositoryReconciler) reconcile(ctx context.Context, obj *sourcev1.G
 		conditions.MarkReconciling(obj, "NewGeneration", "reconciling new object generation (%d)", obj.Generation)
 	}
 
+	oldObj := obj.DeepCopy()
+
 	// Create temp dir for Git clone
 	tmpDir, err := util.TempDirForObj("", obj)
 	if err != nil {
@@ -255,7 +264,50 @@ func (r *GitRepositoryReconciler) reconcile(ctx context.Context, obj *sourcev1.G
 		// Prioritize requeue request in the result.
 		res = sreconcile.LowestRequeuingResult(res, recResult)
 	}
+
+	// r.notify(res, resErr, oldObj, obj, commit)
+	r.notify(oldObj, obj, commit, res, resErr)
+
 	return res, resErr
+}
+
+// notify emits notification related to the reconciliation.
+// func (r *GitRepositoryReconciler) notify(res sreconcile.Result, resErr error, oldObj, newObj *sourcev1.GitRepository, commit git.Commit) {
+func (r *GitRepositoryReconciler) notify(oldObj, newObj *sourcev1.GitRepository, commit git.Commit, res sreconcile.Result, resErr error) {
+	// Notify successful reconciliation for new artifact and recovery from any
+	// failure.
+	if resErr == nil && res == sreconcile.ResultSuccess && newObj.Status.Artifact != nil {
+		annotations := map[string]string{
+			"revision": newObj.Status.Artifact.Revision,
+			"checksum": newObj.Status.Artifact.Checksum,
+		}
+
+		var oldChecksum string
+		if oldObj.GetArtifact() != nil {
+			oldChecksum = oldObj.GetArtifact().Checksum
+		}
+
+		if oldChecksum != newObj.GetArtifact().Checksum {
+			r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+				"NewArtifact", "stored artifact for commit '%s'", commit.ShortMessage())
+		} else {
+			// Check if the failure condition in the old object is still present
+			// in the new object. If not found, emit an event to signal that the
+			// failure has been resolved.
+			foundCondition := false
+			for _, failCondition := range gitRepositoryFailConditions {
+				if conditions.Get(oldObj, failCondition) != nil &&
+					conditions.Get(newObj, failCondition) != nil {
+					foundCondition = true
+					break
+				}
+			}
+			if !foundCondition {
+				r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+					meta.SucceededReason, "fetched artifact for commit '%s'", commit.ShortMessage())
+			}
+		}
+	}
 }
 
 // reconcileStorage ensures the current state of the storage matches the
@@ -516,10 +568,6 @@ func (r *GitRepositoryReconciler) reconcileArtifact(ctx context.Context,
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
-	r.AnnotatedEventf(obj, map[string]string{
-		"revision": artifact.Revision,
-		"checksum": artifact.Checksum,
-	}, corev1.EventTypeNormal, "NewArtifact", "stored artifact for commit '%s'", commit.ShortMessage())
 
 	// Record it on the object
 	obj.Status.Artifact = artifact.DeepCopy()

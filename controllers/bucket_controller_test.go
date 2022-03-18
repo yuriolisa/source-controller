@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -1066,6 +1067,106 @@ func Test_etagIndex_Revision(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("revision() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBucketReconciler_notify(t *testing.T) {
+	tests := []struct {
+		name             string
+		res              sreconcile.Result
+		resErr           error
+		oldObjBeforeFunc func(obj *sourcev1.Bucket)
+		newObjBeforeFunc func(obj *sourcev1.Bucket)
+		wantEvent        string
+	}{
+		{
+			name:   "error - no event",
+			res:    sreconcile.ResultEmpty,
+			resErr: errors.New("some error"),
+		},
+		{
+			name:   "new artifact",
+			res:    sreconcile.ResultSuccess,
+			resErr: nil,
+			newObjBeforeFunc: func(obj *sourcev1.Bucket) {
+				obj.Status.Artifact = &sourcev1.Artifact{Revision: "xxx", Checksum: "yyy"}
+			},
+			wantEvent: "Normal NewArtifact stored 2 files from",
+		},
+		{
+			name:   "recovery from failure",
+			res:    sreconcile.ResultSuccess,
+			resErr: nil,
+			oldObjBeforeFunc: func(obj *sourcev1.Bucket) {
+				obj.Status.Artifact = &sourcev1.Artifact{Revision: "xxx", Checksum: "yyy"}
+				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, sourcev1.GitOperationFailedReason, "fail")
+				conditions.MarkFalse(obj, meta.ReadyCondition, meta.FailedReason, "foo")
+			},
+			newObjBeforeFunc: func(obj *sourcev1.Bucket) {
+				obj.Status.Artifact = &sourcev1.Artifact{Revision: "xxx", Checksum: "yyy"}
+				conditions.MarkTrue(obj, meta.ReadyCondition, meta.SucceededReason, "ready")
+			},
+			wantEvent: "Normal Succeeded fetched 2 files from",
+		},
+		{
+			name:   "recovery and new artifact",
+			res:    sreconcile.ResultSuccess,
+			resErr: nil,
+			oldObjBeforeFunc: func(obj *sourcev1.Bucket) {
+				obj.Status.Artifact = &sourcev1.Artifact{Revision: "xxx", Checksum: "yyy"}
+				conditions.MarkTrue(obj, sourcev1.FetchFailedCondition, sourcev1.GitOperationFailedReason, "fail")
+				conditions.MarkFalse(obj, meta.ReadyCondition, meta.FailedReason, "foo")
+			},
+			newObjBeforeFunc: func(obj *sourcev1.Bucket) {
+				obj.Status.Artifact = &sourcev1.Artifact{Revision: "aaa", Checksum: "bbb"}
+				conditions.MarkTrue(obj, meta.ReadyCondition, meta.SucceededReason, "ready")
+			},
+			wantEvent: "Normal NewArtifact stored 2 files from",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			recorder := record.NewFakeRecorder(32)
+
+			oldObj := &sourcev1.Bucket{
+				Spec: sourcev1.BucketSpec{
+					BucketName: "test-bucket",
+				},
+			}
+			newObj := oldObj.DeepCopy()
+
+			if tt.oldObjBeforeFunc != nil {
+				tt.oldObjBeforeFunc(oldObj)
+			}
+			if tt.newObjBeforeFunc != nil {
+				tt.newObjBeforeFunc(newObj)
+			}
+
+			reconciler := &BucketReconciler{
+				EventRecorder: recorder,
+			}
+			index := &etagIndex{
+				index: map[string]string{
+					"zzz": "qqq",
+					"bbb": "ddd",
+				},
+			}
+			reconciler.notify(oldObj, newObj, index, tt.res, tt.resErr)
+
+			select {
+			case x, ok := <-recorder.Events:
+				g.Expect(ok).To(Equal(tt.wantEvent != ""), "unexpected event received")
+				if tt.wantEvent != "" {
+					g.Expect(x).To(ContainSubstring(tt.wantEvent))
+				}
+			default:
+				if tt.wantEvent != "" {
+					t.Errorf("expected some event to be emitted")
+				}
 			}
 		})
 	}

@@ -97,6 +97,12 @@ var bucketReadyCondition = summarize.Conditions{
 	},
 }
 
+// bucketFailConditions contains the conditions that represent failure.
+var bucketFailConditions = []string{
+	sourcev1.FetchFailedCondition,
+	sourcev1.StorageOperationFailedCondition,
+}
+
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=buckets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=buckets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=buckets/finalizers,verbs=get;create;update;patch;delete
@@ -313,6 +319,8 @@ func (r *BucketReconciler) reconcile(ctx context.Context, obj *sourcev1.Bucket, 
 		conditions.MarkReconciling(obj, "NewGeneration", "reconciling new object generation (%d)", obj.Generation)
 	}
 
+	oldObj := obj.DeepCopy()
+
 	// Create temp working dir
 	tmpDir, err := os.MkdirTemp("", fmt.Sprintf("%s-%s-%s-", obj.Kind, obj.Namespace, obj.Name))
 	if err != nil {
@@ -353,7 +361,48 @@ func (r *BucketReconciler) reconcile(ctx context.Context, obj *sourcev1.Bucket, 
 		// Prioritize requeue request in the result.
 		res = sreconcile.LowestRequeuingResult(res, recResult)
 	}
+
+	r.notify(oldObj, obj, index, res, resErr)
+
 	return res, resErr
+}
+
+// notify emits notification related to the reconciliation.
+func (r *BucketReconciler) notify(oldObj, newObj *sourcev1.Bucket, index *etagIndex, res sreconcile.Result, resErr error) {
+	// Notify successful reconciliation for new artifact and recovery from any
+	// failure.
+	if resErr == nil && res == sreconcile.ResultSuccess && newObj.Status.Artifact != nil {
+		annotations := map[string]string{
+			"revision": newObj.Status.Artifact.Revision,
+			"checksum": newObj.Status.Artifact.Checksum,
+		}
+
+		var oldChecksum string
+		if oldObj.GetArtifact() != nil {
+			oldChecksum = oldObj.GetArtifact().Checksum
+		}
+
+		if oldChecksum != newObj.GetArtifact().Checksum {
+			r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+				"NewArtifact", "stored %d files from '%s'", index.Len(), newObj.Spec.BucketName)
+		} else {
+			// Check if the failure condition in the old object is still present
+			// in the new object. If not found, emit an event to signal that the
+			// failure has been resolved.
+			foundCondition := false
+			for _, failCondition := range gitRepositoryFailConditions {
+				if conditions.Get(oldObj, failCondition) != nil &&
+					conditions.Get(newObj, failCondition) != nil {
+					foundCondition = true
+					break
+				}
+			}
+			if !foundCondition {
+				r.AnnotatedEventf(newObj, annotations, corev1.EventTypeNormal,
+					meta.SucceededReason, "fetched %d files from '%s'", index.Len(), newObj.Spec.BucketName)
+			}
+		}
+	}
 }
 
 // reconcileStorage ensures the current state of the storage matches the
@@ -569,10 +618,6 @@ func (r *BucketReconciler) reconcileArtifact(ctx context.Context, obj *sourcev1.
 		conditions.MarkTrue(obj, sourcev1.StorageOperationFailedCondition, e.Reason, e.Err.Error())
 		return sreconcile.ResultEmpty, e
 	}
-	r.annotatedEventLogf(ctx, obj, map[string]string{
-		"revision": artifact.Revision,
-		"checksum": artifact.Checksum,
-	}, corev1.EventTypeNormal, "NewArtifact", "fetched %d files from '%s'", index.Len(), obj.Spec.BucketName)
 
 	// Record it on the object
 	obj.Status.Artifact = artifact.DeepCopy()
