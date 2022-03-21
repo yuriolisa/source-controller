@@ -20,7 +20,7 @@ require (
 	github.com/docker/go-units v0.4.0
 	github.com/elazarl/goproxy v0.0.0-20220115173737-adb46da277ac
 	github.com/fluxcd/pkg/apis/meta v0.12.1
-	github.com/fluxcd/pkg/gittestserver v0.5.1
+	github.com/fluxcd/pkg/gittestserver v0.5.2
 	github.com/fluxcd/pkg/gitutil v0.1.0
 	github.com/fluxcd/pkg/helmtestserver v0.7.1
 	github.com/fluxcd/pkg/lockedfile v0.1.0
@@ -207,7 +207,7 @@ require (
 	go.uber.org/zap v1.21.0 // indirect
 	golang.org/x/net v0.0.0-20220225172249-27dd8689420f // indirect
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a // indirect
-	golang.org/x/sys v0.0.0-20220310020820-b874c991c1a5 // indirect
+	golang.org/x/sys v0.0.0-20220319134239-a9b59b0215f8 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/time v0.0.0-20220210224613-90d013bbcef8 // indirect
