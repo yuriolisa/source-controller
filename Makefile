@@ -10,7 +10,7 @@ LIBGIT2_TAG ?= libgit2-1.3.0-2
 # e.g. '--push'.
 BUILD_ARGS ?=
 # Architectures to build images for
-BUILD_PLATFORMS ?= linux/amd64,linux/arm64,linux/arm/v7
+BUILD_PLATFORMS ?= linux/amd64
 
 # Go additional tag arguments, e.g. 'integration'
 GO_TAGS ?=
